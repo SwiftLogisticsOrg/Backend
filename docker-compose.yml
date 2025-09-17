@@ -163,8 +163,11 @@ services:
     ports:
       - "3006:3006"
     environment:
-      NODE_ENV: development
-      PORT: 3006
+      - RABBIT_URL=amqp://rabbitmq
+      - CMS_URL=http://cms-mock:3006/soap
+      - EXCHANGE=orders
+      # NODE_ENV: development
+      # PORT: 3006
     volumes:
       - ./services/cms-adapter:/app
       - /app/node_modules
