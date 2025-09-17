@@ -1,0 +1,19 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies including nodemon for development
+RUN npm install
+
+# Copy shared utilities
+COPY ../shared ./shared
+
+# Copy source code
+COPY . .
+
+EXPOSE 3001
+
+CMD ["npm", "run", "dev"]

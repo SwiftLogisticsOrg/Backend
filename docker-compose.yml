@@ -1,0 +1,220 @@
+version: '3.8'
+
+services:
+  # Infrastructure
+  postgres:
+    image: postgres:15-alpine
+    container_name: swifttrack-postgres
+    environment:
+      POSTGRES_DB: swifttrack
+      POSTGRES_USER: swifttrack
+      POSTGRES_PASSWORD: swifttrack123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - swifttrack-network
+
+  mongodb:
+    image: mongo:7.0
+    container_name: swifttrack-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: swifttrack
+      MONGO_INITDB_ROOT_PASSWORD: swifttrack123
+      MONGO_INITDB_DATABASE: swifttrack_orders
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongodb/init.js:/docker-entrypoint-initdb.d/init.js
+    networks:
+      - swifttrack-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: swifttrack-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - swifttrack-network
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: swifttrack-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: swifttrack
+      RABBITMQ_DEFAULT_PASS: swifttrack123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - swifttrack-network
+
+  # Services (Development)
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-gateway
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+    volumes:
+      - ./api-gateway:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - mongodb
+      - redis
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-user-service
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+    volumes:
+      - ./services/user-service:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-order-service
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: development
+      PORT: 3003
+    volumes:
+      - ./services/order-service:/app
+      - /app/node_modules
+    depends_on:
+      - mongodb
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+  logistics-service:
+    build:
+      context: ./services/logistics-service
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-logistics-service
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: development
+      PORT: 3004
+    volumes:
+      - ./services/logistics-service:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-notification-service
+    ports:
+      - "3005:3005"
+    environment:
+      NODE_ENV: development
+      PORT: 3005
+    volumes:
+      - ./services/notification-service:/app
+      - /app/node_modules
+    depends_on:
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+  # Adapter Services
+  cms-adapter:
+    build:
+      context: ./services/cms-adapter
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-cms-adapter
+    ports:
+      - "3006:3006"
+    environment:
+      NODE_ENV: development
+      PORT: 3006
+    volumes:
+      - ./services/cms-adapter:/app
+      - /app/node_modules
+    depends_on:
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+  ros-adapter:
+    build:
+      context: ./services/ros-adapter
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-ros-adapter
+    ports:
+      - "3007:3007"
+    environment:
+      NODE_ENV: development
+      PORT: 3007
+    volumes:
+      - ./services/ros-adapter:/app
+      - /app/node_modules
+    depends_on:
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+  wms-adapter:
+    build:
+      context: ./services/wms-adapter
+      dockerfile: Dockerfile.dev
+    container_name: swifttrack-wms-adapter
+    ports:
+      - "3008:3008"
+    environment:
+      NODE_ENV: development
+      PORT: 3008
+    volumes:
+      - ./services/wms-adapter:/app
+      - /app/node_modules
+    depends_on:
+      - rabbitmq
+    networks:
+      - swifttrack-network
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  swifttrack-network:
+    driver: bridge
