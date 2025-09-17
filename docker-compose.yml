@@ -202,8 +202,13 @@ services:
     ports:
       - "3008:3008"
     environment:
-      NODE_ENV: development
-      PORT: 3008
+      # NODE_ENV: development
+      # PORT: 3008
+      - RABBIT_URL=amqp://rabbitmq
+      - EXCHANGE=orders
+      - WMS_HOST=wms-mock
+      - WMS_PORT=5001
+      - ADAPTER_ID=wms-demo-1
     volumes:
       - ./services/wms-adapter:/app
       - /app/node_modules
