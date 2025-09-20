@@ -4,6 +4,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
+const morgan = require('morgan');
 
 const logger = require('../../shared/logger');
 const { errorHandler, notFound } = require('../../shared/errorHandler');
@@ -25,7 +26,7 @@ const io = socketIo(server, {
 // Email transporter setup (optional)
 let emailTransporter = null;
 if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  emailTransporter = nodemailer.createTransporter({
+  emailTransporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST,
     port: process.env.EMAIL_PORT,
     secure: false,
@@ -41,6 +42,11 @@ if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) 
 }
 
 // Middleware
+app.use(morgan('combined', {
+  stream: {
+    write: (message) => logger.info(message.trim())
+  }
+}));
 app.use(express.json());
 
 // Health check
@@ -273,7 +279,7 @@ async function setupEventHandlers() {
 
   // Handle order creation notifications
   await messageBroker.subscribe(
-    'order.created',
+    'order.created.notifications',
     async (data) => {
       const { orderId, clientId, priority } = data;
       
@@ -317,7 +323,7 @@ async function setupEventHandlers() {
   // Bind queues to exchanges
   await messageBroker.bindQueue('order.status.updated', messageBroker.exchanges.ORDERS, 'order.status.updated');
   await messageBroker.bindQueue('driver.assigned', messageBroker.exchanges.ORDERS, 'driver.assigned');
-  await messageBroker.bindQueue('order.created', messageBroker.exchanges.ORDERS, 'order.created');
+  await messageBroker.bindQueue('order.created.notifications', messageBroker.exchanges.ORDERS, 'order.created');
   await messageBroker.bindQueue('driver.location.updated', messageBroker.exchanges.LOGISTICS, 'driver.location.updated');
 }
 

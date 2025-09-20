@@ -3,6 +3,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const redis = require('redis');
 const { v4: uuidv4 } = require('uuid');
+const morgan = require('morgan');
 
 const logger = require('../../shared/logger');
 const { validateRequest, validateQuery } = require('../../shared/validation');
@@ -33,6 +34,11 @@ redisClient.connect()
   .catch(err => logger.error('Logistics Service: Redis connection error:', err));
 
 // Middleware
+app.use(morgan('combined', {
+  stream: {
+    write: (message) => logger.info(message.trim())
+  }
+}));
 app.use(express.json());
 
 // Health check
@@ -49,11 +55,11 @@ app.get('/health', (req, res) => {
 const DriverModel = {
   async getDriverOrders(driverId) {
     const query = `
-      SELECT do.*, o.pickup_address, o.delivery_address, o.contact_phone, o.priority
-      FROM driver_orders do
-      JOIN orders o ON do.order_id = o.id
-      WHERE do.driver_id = $1
-      ORDER BY do.assigned_at DESC
+      SELECT dro.*, o.pickup_address, o.delivery_address, o.contact_phone, o.priority
+      FROM driver_orders dro
+      JOIN orders o ON dro.order_id = o.id
+      WHERE dro.driver_id = $1
+      ORDER BY dro.assigned_at DESC
     `;
     const result = await pool.query(query, [driverId]);
     return result.rows;
@@ -633,7 +639,7 @@ app.post('/api/logistics/eta', asyncHandler(async (req, res) => {
 async function setupEventHandlers() {
   // Handle order created events for automatic driver assignment
   await messageBroker.subscribe(
-    messageBroker.queues.ORDER_CREATED,
+    'order.created.logistics',
     async (data) => {
       logger.info('Order created event received:', data);
       
@@ -654,7 +660,7 @@ async function setupEventHandlers() {
 
   // Bind queues to exchanges
   await messageBroker.bindQueue(
-    messageBroker.queues.ORDER_CREATED,
+    'order.created.logistics',
     messageBroker.exchanges.ORDERS,
     'order.created'
   );

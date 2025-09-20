@@ -84,6 +84,9 @@ class MessageBroker {
     }
 
     try {
+      // Assert queue exists before consuming
+      await this.channel.assertQueue(queue, { durable: true });
+      
       await this.channel.consume(queue, async (msg) => {
         if (msg) {
           try {

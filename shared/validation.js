@@ -1,11 +1,32 @@
 const Joi = require('joi');
 
+// Define paginationQuery first
+const paginationQuery = Joi.object({
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  sortBy: Joi.string().optional(),
+  sortOrder: Joi.string().valid('asc', 'desc').default('desc')
+});
+
+// Define orderQuery using paginationQuery
+const orderQuery = Joi.object({
+  status: Joi.string().valid(
+    'created', 'assigned', 'accepted', 'en_route_pickup', 
+    'arrived_pickup', 'picked_up', 'en_route_delivery', 
+    'arrived_delivery', 'delivered', 'cancelled'
+  ).optional(),
+  startDate: Joi.date().optional(),
+  endDate: Joi.date().optional(),
+  clientId: Joi.string().optional(),
+  driverId: Joi.string().optional()
+}).concat(paginationQuery);
+
 const validation = {
   // User validation schemas
   registerUser: Joi.object({
     name: Joi.string().min(2).max(50).required(),
     email: Joi.string().email().required(),
-    password: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#\$%\^&\*])')).required()
+    password: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*])')).required()
       .messages({
         'string.pattern.base': 'Password must contain at least one lowercase letter, one uppercase letter, one number and one special character'
       }),
@@ -27,7 +48,15 @@ const validation = {
   // Order validation schemas
   createOrder: Joi.object({
     pickupAddress: Joi.string().min(10).max(200).required(),
+    pickupCoordinates: Joi.object({
+      latitude: Joi.number().min(-90).max(90).required(),
+      longitude: Joi.number().min(-180).max(180).required()
+    }).required(),
     deliveryAddress: Joi.string().min(10).max(200).required(),
+    deliveryCoordinates: Joi.object({
+      latitude: Joi.number().min(-90).max(90).required(),
+      longitude: Joi.number().min(-180).max(180).required()
+    }).required(),
     items: Joi.array().items(
       Joi.object({
         name: Joi.string().min(1).max(100).required(),
@@ -73,24 +102,8 @@ const validation = {
   }),
 
   // Query validation schemas
-  paginationQuery: Joi.object({
-    page: Joi.number().integer().min(1).default(1),
-    limit: Joi.number().integer().min(1).max(100).default(20),
-    sortBy: Joi.string().optional(),
-    sortOrder: Joi.string().valid('asc', 'desc').default('desc')
-  }),
-
-  orderQuery: Joi.object({
-    status: Joi.string().valid(
-      'created', 'assigned', 'accepted', 'en_route_pickup', 
-      'arrived_pickup', 'picked_up', 'en_route_delivery', 
-      'arrived_delivery', 'delivered', 'cancelled'
-    ).optional(),
-    startDate: Joi.date().optional(),
-    endDate: Joi.date().optional(),
-    clientId: Joi.string().optional(),
-    driverId: Joi.string().optional()
-  }).concat(this.paginationQuery)
+  paginationQuery,
+  orderQuery
 };
 
 const validateRequest = (schema) => {

@@ -96,7 +96,15 @@ Content-Type: application/json
 
 {
   "pickupAddress": "123 Main St, City A",
+  "pickupCoordinates": {
+    "latitude": 37.7749,
+    "longitude": -122.4194
+  },
   "deliveryAddress": "456 Oak Ave, City B",
+  "deliveryCoordinates": {
+    "latitude": 37.7849,
+    "longitude": -122.4094
+  },
   "items": [
     {
       "name": "Electronics Package",
@@ -110,6 +118,13 @@ Content-Type: application/json
   "scheduledPickup": "2025-01-12T10:00:00Z"
 }
 ```
+
+**Note:** Coordinates are required for both pickup and delivery locations. These coordinates are used by the ROS (Robot Operating System) adapter for route optimization and autonomous vehicle navigation. 
+
+Coordinate Requirements:
+- `latitude`: Number between -90 and 90 (degrees)
+- `longitude`: Number between -180 and 180 (degrees)
+- Coordinates should be in decimal degrees format (WGS84)
 
 #### Get Orders
 ```http
