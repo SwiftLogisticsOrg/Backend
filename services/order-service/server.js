@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
+const morgan = require('morgan');
 
 const logger = require('../../shared/logger');
 const { validateRequest, validateQuery } = require('../../shared/validation');
@@ -26,6 +27,11 @@ mongoose.connection.on('error', (err) => {
 });
 
 // Middleware
+app.use(morgan('combined', {
+  stream: {
+    write: (message) => logger.info(message.trim())
+  }
+}));
 app.use(express.json());
 
 // Order Schema
@@ -47,9 +53,37 @@ const orderSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  pickupCoordinates: {
+    latitude: {
+      type: Number,
+      min: -90,
+      max: 90,
+      required: true
+    },
+    longitude: {
+      type: Number,
+      min: -180,
+      max: 180,
+      required: true
+    }
+  },
   deliveryAddress: {
     type: String,
     required: true
+  },
+  deliveryCoordinates: {
+    latitude: {
+      type: Number,
+      min: -90,
+      max: 90,
+      required: true
+    },
+    longitude: {
+      type: Number,
+      min: -180,
+      max: 180,
+      required: true
+    }
   },
   items: [{
     name: {
@@ -81,8 +115,8 @@ const orderSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['created', 'assigned', 'accepted', 'en_route_pickup', 'arrived_pickup', 
-           'picked_up', 'en_route_delivery', 'arrived_delivery', 'delivered', 'cancelled'],
+    enum: ['created', 'assigned', 'accepted', 'en_route_pickup', 'arrived_pickup',
+      'picked_up', 'en_route_delivery', 'arrived_delivery', 'delivered', 'cancelled'],
     default: 'created',
     index: true
   },
@@ -188,14 +222,44 @@ app.get('/health', (req, res) => {
  *             type: object
  *             required:
  *               - pickupAddress
+ *               - pickupCoordinates
  *               - deliveryAddress
+ *               - deliveryCoordinates
  *               - items
  *               - contactPhone
  *             properties:
  *               pickupAddress:
  *                 type: string
+ *               pickupCoordinates:
+ *                 type: object
+ *                 required:
+ *                   - latitude
+ *                   - longitude
+ *                 properties:
+ *                   latitude:
+ *                     type: number
+ *                     minimum: -90
+ *                     maximum: 90
+ *                   longitude:
+ *                     type: number
+ *                     minimum: -180
+ *                     maximum: 180
  *               deliveryAddress:
  *                 type: string
+ *               deliveryCoordinates:
+ *                 type: object
+ *                 required:
+ *                   - latitude
+ *                   - longitude
+ *                 properties:
+ *                   latitude:
+ *                     type: number
+ *                     minimum: -90
+ *                     maximum: 90
+ *                   longitude:
+ *                     type: number
+ *                     minimum: -180
+ *                     maximum: 180
  *               items:
  *                 type: array
  *                 items:
@@ -230,7 +294,7 @@ app.post('/api/orders',
   asyncHandler(async (req, res) => {
     const clientId = req.headers['x-user-id'];
     const userRole = req.headers['x-user-role'];
-    
+
     if (!clientId) {
       return res.status(401).json({ error: 'User ID required' });
     }
@@ -247,12 +311,20 @@ app.post('/api/orders',
         {
           address: req.body.pickupAddress,
           type: 'pickup',
-          completed: false
+          completed: false,
+          location: {
+            latitude: req.body.pickupCoordinates.latitude,
+            longitude: req.body.pickupCoordinates.longitude
+          }
         },
         {
           address: req.body.deliveryAddress,
           type: 'delivery',
-          completed: false
+          completed: false,
+          location: {
+            latitude: req.body.deliveryCoordinates.latitude,
+            longitude: req.body.deliveryCoordinates.longitude
+          }
         }
       ],
       tracking: [{
@@ -275,8 +347,31 @@ app.post('/api/orders',
         clientId: order.clientId,
         pickupAddress: order.pickupAddress,
         deliveryAddress: order.deliveryAddress,
+        items: order.items,
+        pickup: {
+          address: order.pickupAddress,
+          coordinates: {
+            latitude: order.pickupCoordinates.latitude,
+            longitude: order.pickupCoordinates.longitude
+          },
+          scheduledTime: order.scheduledPickup,
+
+        },
+        delivery: {
+          address: order.deliveryAddress,
+          coordinates: {
+            latitude: order.deliveryCoordinates.latitude,
+            longitude: order.deliveryCoordinates.longitude
+          },
+          estimatedTime: order.estimatedDelivery
+        },
+        contact: {
+          phone: order.contactPhone
+        },
         priority: order.priority,
-        timestamp: new Date().toISOString()
+        notes: order.notes,
+        timestamp: new Date().toISOString(),
+        correlationId: `ord-${Date.now()}-${order._id}`
       }
     );
 
@@ -324,16 +419,16 @@ app.get('/api/orders',
   asyncHandler(async (req, res) => {
     const userId = req.headers['x-user-id'];
     const userRole = req.headers['x-user-role'];
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User ID required' });
     }
 
     const { status, startDate, endDate, page, limit, sortBy, sortOrder } = req.query;
-    
+
     // Build query based on user role
-    let query = {};
-    
+    const query = {};
+
     if (userRole === 'client') {
       query.clientId = userId;
     } else if (userRole === 'driver') {
@@ -408,7 +503,7 @@ app.get('/api/orders/:id', asyncHandler(async (req, res) => {
   const userId = req.headers['x-user-id'];
   const userRole = req.headers['x-user-role'];
   const { id } = req.params;
-  
+
   if (!userId) {
     return res.status(401).json({ error: 'User ID required' });
   }
@@ -422,7 +517,7 @@ app.get('/api/orders/:id', asyncHandler(async (req, res) => {
   if (userRole === 'client' && order.clientId !== userId) {
     return res.status(403).json({ error: 'Access denied' });
   }
-  
+
   if (userRole === 'driver' && order.driverId !== userId) {
     return res.status(403).json({ error: 'Access denied' });
   }
@@ -486,7 +581,7 @@ app.patch('/api/orders/:id/status',
     const userRole = req.headers['x-user-role'];
     const { id } = req.params;
     const { status, location, notes, proofUrl } = req.body;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User ID required' });
     }
@@ -500,14 +595,14 @@ app.patch('/api/orders/:id/status',
     if (userRole === 'driver' && order.driverId !== userId) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    
+
     if (userRole === 'client') {
       return res.status(403).json({ error: 'Clients cannot update order status' });
     }
 
     // Update order status
     order.status = status;
-    
+
     // Add tracking entry
     order.tracking.push({
       status,
@@ -534,7 +629,7 @@ app.patch('/api/orders/:id/status',
         deliveryRoute.location = location;
       }
       order.actualDelivery = new Date();
-      
+
       if (proofUrl) {
         order.proofOfDelivery = {
           url: proofUrl,
@@ -615,7 +710,7 @@ app.patch('/api/orders/:id/assign', asyncHandler(async (req, res) => {
   const userRole = req.headers['x-user-role'];
   const { id } = req.params;
   const { driverId, estimatedPickup, estimatedDelivery } = req.body;
-  
+
   if (userRole !== 'admin') {
     return res.status(403).json({ error: 'Only admins can assign orders' });
   }
@@ -694,7 +789,7 @@ async function startServer() {
   try {
     await messageBroker.connect();
     await setupEventHandlers();
-    
+
     app.listen(PORT, () => {
       logger.info(`Order Service running on port ${PORT}`);
     });

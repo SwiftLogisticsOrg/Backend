@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const morgan = require('morgan');
 
 const logger = require('../../shared/logger');
 const { generateTokens, verifyRefreshToken } = require('../../shared/auth');
@@ -25,6 +26,11 @@ pool.connect()
   .catch(err => logger.error('User Service: PostgreSQL connection error:', err));
 
 // Middleware
+app.use(morgan('combined', {
+  stream: {
+    write: (message) => logger.info(message.trim())
+  }
+}));
 app.use(express.json());
 
 // Health check

@@ -9,7 +9,7 @@ dotenv.config();
 // Config (env vars or defaults)
 const RABBIT_URL = process.env.RABBITMQ_URL || 'amqp://swifttrack:swifttrack123@localhost:5672';
 const CMS_URL = process.env.CMS_URL || 'http://localhost:3006/soap';
-const EXCHANGE = process.env.EXCHANGE || 'orders';
+const EXCHANGE = process.env.EXCHANGE || 'orders.exchange';
 
 // Helper: build CreateOrder SOAP envelope
 function buildCreateOrderSOAP(order) {
@@ -72,10 +72,10 @@ async function start() {
   const conn = await amqp.connect(RABBIT_URL);
   const ch = await conn.createChannel();
 
-  await ch.assertExchange(EXCHANGE, 'topic', { durable: false });
+  await ch.assertExchange(EXCHANGE, 'topic', { durable: true });
 
   // Queue to consume order.created events
-  const q = await ch.assertQueue('cms-adapter-q', { durable: false });
+  const q = await ch.assertQueue('cms-adapter-q', { durable: true });
   await ch.bindQueue(q.queue, EXCHANGE, 'order.created');
 
   console.log('[CMS Adapter] Waiting for order.created events...');

@@ -1,3 +1,8 @@
+require('dotenv').config({
+  path: require('path').resolve(__dirname, '../.env'),
+  override: true
+});
+
 const { Pool } = require('pg');
 const logger = require('../../../shared/logger');
 
@@ -89,7 +94,7 @@ const migrations = [
 
 async function runMigrations() {
   const client = await pool.connect();
-  
+
   try {
     // Create migrations table
     await client.query(`
@@ -108,13 +113,13 @@ async function runMigrations() {
     for (const migration of migrations) {
       if (!executedMigrations.includes(migration.name)) {
         logger.info(`Running migration: ${migration.name}`);
-        
+
         await client.query('BEGIN');
         try {
           await client.query(migration.up);
           await client.query('INSERT INTO migrations (name) VALUES ($1)', [migration.name]);
           await client.query('COMMIT');
-          
+
           logger.info(`Migration completed: ${migration.name}`);
         } catch (error) {
           await client.query('ROLLBACK');

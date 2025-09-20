@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const morgan = require('morgan');
 
 const logger = require('../../shared/logger');
 const { asyncHandler, errorHandler, notFound } = require('../../shared/errorHandler');
@@ -21,6 +22,11 @@ const rosClient = axios.create({
 });
 
 // Middleware
+app.use(morgan('combined', {
+  stream: {
+    write: (message) => logger.info(message.trim())
+  }
+}));
 app.use(express.json());
 
 // Health check
@@ -111,8 +117,7 @@ const ROSAdapter = {
   // Optimize route using external ROS
   async optimizeRoute(routeRequest) {
     if (!process.env.ROS_API_KEY) {
-      logger.warn('ROS API not configured, using fallback optimization');
-      return this.fallbackOptimization(routeRequest);
+      throw new Error('ROS API not configured');
     }
 
     try {
@@ -136,17 +141,14 @@ const ROSAdapter = {
         });
       }
       
-      // Fallback to simple optimization
-      logger.info('Falling back to simple optimization');
-      return this.fallbackOptimization(routeRequest);
+      throw error;
     }
   },
 
   // Calculate ETA using external ROS
   async calculateETA(origin, destination, options = {}) {
     if (!process.env.ROS_API_KEY) {
-      logger.warn('ROS API not configured, using fallback ETA calculation');
-      return this.fallbackETA(origin, destination);
+      throw new Error('ROS API not configured');
     }
 
     try {
@@ -186,106 +188,8 @@ const ROSAdapter = {
       }
     } catch (error) {
       logger.error('ROS ETA calculation error:', error.message);
-      return this.fallbackETA(origin, destination);
+      throw error;
     }
-  },
-
-  // Fallback optimization when ROS is unavailable
-  fallbackOptimization(routeRequest) {
-    logger.info('Using fallback route optimization');
-    
-    // Simple nearest neighbor optimization
-    const routes = routeRequest.vehicles.map(vehicle => {
-      const availableStops = [...routeRequest.stops];
-      const steps = [];
-      
-      // Start from depot/vehicle location
-      let currentLocation = vehicle.startLocation;
-      
-      while (availableStops.length > 0) {
-        // Find nearest stop (simple distance calculation)
-        let nearestIndex = 0;
-        let minDistance = Infinity;
-        
-        availableStops.forEach((stop, index) => {
-          const distance = this.calculateSimpleDistance(currentLocation, stop.coordinates);
-          if (distance < minDistance) {
-            minDistance = distance;
-            nearestIndex = index;
-          }
-        });
-        
-        const nearestStop = availableStops.splice(nearestIndex, 1)[0];
-        steps.push({
-          id: nearestStop.id,
-          type: nearestStop.type,
-          location: {
-            address: nearestStop.address,
-            coordinates: nearestStop.coordinates
-          },
-          distance: minDistance,
-          duration: minDistance * 60, // Rough estimate: 1km = 1 minute
-          description: `${nearestStop.type} at ${nearestStop.address}`
-        });
-        
-        currentLocation = nearestStop.coordinates;
-      }
-      
-      const totalDistance = steps.reduce((sum, step) => sum + step.distance, 0);
-      const totalDuration = steps.reduce((sum, step) => sum + step.duration, 0);
-      
-      return {
-        vehicleId: vehicle.id,
-        distance: totalDistance,
-        duration: totalDuration,
-        cost: totalDistance * 0.5, // $0.50 per km estimate
-        steps
-      };
-    });
-    
-    return {
-      optimized: false,
-      totalDistance: routes.reduce((sum, route) => sum + route.distance, 0),
-      totalDuration: routes.reduce((sum, route) => sum + route.duration, 0),
-      totalCost: routes.reduce((sum, route) => sum + route.cost, 0),
-      routes,
-      unassigned: [],
-      metadata: {
-        provider: 'fallback',
-        method: 'nearest-neighbor',
-        timestamp: new Date().toISOString()
-      }
-    };
-  },
-
-  // Fallback ETA calculation
-  fallbackETA(origin, destination) {
-    const distance = this.calculateSimpleDistance(origin, destination);
-    const duration = distance * 90; // Assume 40 km/h average speed
-    
-    return {
-      distance,
-      duration,
-      eta: new Date(Date.now() + duration * 1000),
-      route: null,
-      trafficConsidered: false,
-      provider: 'fallback'
-    };
-  },
-
-  // Simple distance calculation (Haversine formula)
-  calculateSimpleDistance(point1, point2) {
-    const R = 6371; // Earth's radius in km
-    const dLat = this.toRad(point2.latitude - point1.latitude);
-    const dLon = this.toRad(point2.longitude - point1.longitude);
-    const lat1 = this.toRad(point1.latitude);
-    const lat2 = this.toRad(point2.latitude);
-
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.sin(dLon/2) * Math.sin(dLon/2) * Math.cos(lat1) * Math.cos(lat2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    
-    return R * c;
   },
 
   toRad(degrees) {
@@ -398,18 +302,181 @@ app.post('/api/ros/eta', asyncHandler(async (req, res) => {
 async function setupEventHandlers() {
   // Handle order created events for route optimization
   await messageBroker.subscribe(
-    messageBroker.queues.ORDER_CREATED,
+    'order.created.ros',
     async (data) => {
       logger.info('Order created event received, optimizing route:', data);
       
-      // Auto-optimize route for new orders
-      // This would typically be triggered by logistics service
+      try {
+        // Get nearby drivers who can act as vehicles
+        let availableVehicles = [];
+
+        // Configuration constants (defined here instead of using environment variables)
+        const LOGISTICS_SERVICE_URL = process.env.LOGISTICS_SERVICE_URL;
+        const DRIVER_SEARCH_RADIUS = 50; // km
+        const MAX_DRIVERS_PER_ORDER = 5;
+        const DEFAULT_VEHICLE_WEIGHT_CAPACITY = 100; // kg
+        const DEFAULT_VEHICLE_VOLUME_CAPACITY = 2; // m^3
+        const DEFAULT_VEHICLE_MAX_DISTANCE = 100000; // meters
+        const DEFAULT_VEHICLE_MAX_HOURS = 8; // hours
+        const REQUEST_TIMEOUT = 5000; // ms
+        const SERVICE_TOKEN = 'SERVICE_TOKEN_PLACEHOLDER';
+
+        // Use pickup coordinates - require them to be present
+        if (!data.pickup.coordinates?.latitude || !data.pickup.coordinates?.longitude) {
+          throw new Error('Pickup coordinates are required for route optimization');
+        }
+
+        const pickupLat = data.pickup.coordinates.latitude;
+        const pickupLng = data.pickup.coordinates.longitude;
+
+        try {
+          const driversResponse = await axios.get(`${LOGISTICS_SERVICE_URL}/api/logistics/nearby-drivers`, {
+            params: {
+              latitude: pickupLat,
+              longitude: pickupLng,
+              radius: DRIVER_SEARCH_RADIUS,
+              limit: MAX_DRIVERS_PER_ORDER
+            },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Service-Token': SERVICE_TOKEN
+            },
+            timeout: REQUEST_TIMEOUT
+          });
+          
+          // Transform drivers to vehicle format
+          const nearbyDrivers = driversResponse.data.data || [];
+          availableVehicles = nearbyDrivers.map(driver => ({
+            id: `driver-${driver.driver_id}`,
+            startLocation: {
+              latitude: driver.latitude,
+              longitude: driver.longitude
+            },
+            baseLocation: {
+              latitude: driver.latitude,
+              longitude: driver.longitude
+            },
+            capacity: { 
+              weight: DEFAULT_VEHICLE_WEIGHT_CAPACITY,
+              volume: DEFAULT_VEHICLE_VOLUME_CAPACITY
+            },
+            maxDistance: DEFAULT_VEHICLE_MAX_DISTANCE,
+            maxWorkingHours: DEFAULT_VEHICLE_MAX_HOURS,
+            skills: []
+          }));
+          
+        } catch (driverError) {
+          logger.error('Failed to fetch nearby drivers from logistics service:', driverError.message);
+          throw new Error('Failed to fetch nearby drivers for route optimization');
+        }
+        
+        if (availableVehicles.length === 0) {
+          throw new Error('No available drivers for route optimization');
+        }
+
+        // Calculate service time based on order items
+        const totalItems = data.items ? data.items.reduce((sum, item) => sum + item.quantity, 0) : 1;
+        const serviceTime = Math.max(180, Math.min(600, totalItems * 60)); // 3-10 minutes based on items
+
+        // Transform order data to route optimization request
+        const routeRequest = {
+          id: data.correlationId || `route-${Date.now()}`,
+          profile: data.priority === 'urgent' ? 'fastest' : 'balanced',
+          stops: [
+            {
+              id: `pickup-${data.orderId}`,
+              address: data.pickup.address,
+              coordinates: data.pickup.coordinates || null,
+              type: 'pickup',
+              serviceTime,
+              priority: data.priority === 'urgent' ? 3 : (data.priority === 'express' ? 2 : 1),
+              timeWindows: data.pickup.scheduledTime ? [{
+                start: new Date(data.pickup.scheduledTime).toISOString(),
+                end: new Date(new Date(data.pickup.scheduledTime).getTime() + 3600000).toISOString()
+              }] : []
+            },
+            {
+              id: `delivery-${data.orderId}`,
+              address: data.delivery.address,
+              coordinates: data.delivery.coordinates || null,
+              type: 'delivery',
+              serviceTime,
+              priority: data.priority === 'urgent' ? 3 : (data.priority === 'express' ? 2 : 1),
+              timeWindows: data.delivery.estimatedTime ? [{
+                start: new Date(data.delivery.estimatedTime).toISOString(),
+                end: new Date(new Date(data.delivery.estimatedTime).getTime() + 3600000).toISOString()
+              }] : []
+            }
+          ],
+          vehicles: availableVehicles.map(vehicle => ({
+            id: vehicle.id,
+            startLocation: vehicle.currentLocation || vehicle.baseLocation,
+            endLocation: vehicle.baseLocation,
+            capacity: vehicle.capacity,
+            maxDistance: vehicle.maxDistance || 50000,
+            maxTime: vehicle.maxWorkingHours ? vehicle.maxWorkingHours * 3600 : 28800,
+            skills: vehicle.skills || []
+          })),
+          considerTraffic: true,
+          optimizeOrder: true,
+          balanceRoutes: availableVehicles.length > 1,
+          returnToDepot: true
+        };
+
+        // Call route optimization
+        const optimizedRoute = await ROSAdapter.optimizeRoute(routeRequest);
+        
+        // Publish route.optimized event
+        await messageBroker.publish(
+          messageBroker.exchanges.LOGISTICS,
+          'route.optimized',
+          {
+            orderId: data.orderId,
+            routeId: routeRequest.id,
+            optimized: optimizedRoute.optimized,
+            totalDistance: optimizedRoute.totalDistance,
+            totalDuration: optimizedRoute.totalDuration,
+            totalCost: optimizedRoute.totalCost,
+            routes: optimizedRoute.routes,
+            provider: optimizedRoute.metadata.provider,
+            timestamp: new Date().toISOString(),
+            correlationId: data.correlationId
+          }
+        );
+
+        logger.info('Route optimization completed for order:', {
+          orderId: data.orderId,
+          routeId: routeRequest.id,
+          provider: optimizedRoute.metadata.provider,
+          optimized: optimizedRoute.optimized,
+          totalDistance: optimizedRoute.totalDistance,
+          totalDuration: optimizedRoute.totalDuration
+        });
+
+      } catch (error) {
+        logger.error('Failed to optimize route for order:', {
+          orderId: data.orderId,
+          error: error.message
+        });
+        
+        // Publish failed optimization event
+        await messageBroker.publish(
+          messageBroker.exchanges.LOGISTICS,
+          'route.optimization.failed',
+          {
+            orderId: data.orderId,
+            error: error.message,
+            timestamp: new Date().toISOString(),
+            correlationId: data.correlationId
+          }
+        );
+      }
     }
   );
 
   // Bind queues to exchanges
   await messageBroker.bindQueue(
-    messageBroker.queues.ORDER_CREATED,
+    'order.created.ros',
     messageBroker.exchanges.ORDERS,
     'order.created'
   );

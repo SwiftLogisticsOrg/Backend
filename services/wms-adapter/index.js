@@ -12,7 +12,7 @@ info.log = console.log.bind(console);
 // Configuration via env
 //
 const RABBIT_URL = process.env.RABBITMQ_URL || 'amqp://swifttrack:swifttrack123@localhost:5672';
-const EXCHANGE = process.env.EXCHANGE || 'orders';
+const EXCHANGE = process.env.EXCHANGE || 'orders.exchange';
 const WMS_HOST = process.env.WMS_HOST || '127.0.0.1';
 const WMS_PORT = parseInt(process.env.WMS_PORT || '3008', 10);
 const ADAPTER_ID = process.env.ADAPTER_ID || `wms-adp-${Math.random().toString(36).slice(2,8)}`;
@@ -168,10 +168,10 @@ async function connectRabbit() {
     info('[AMQP] connecting to', RABBIT_URL);
     amqpConn = await amqp.connect(RABBIT_URL);
     amqpCh = await amqpConn.createChannel();
-    await amqpCh.assertExchange(EXCHANGE, 'topic', { durable: false });
+    await amqpCh.assertExchange(EXCHANGE, 'topic', { durable: true });
 
     // create/load queue and bind to order.created
-    await amqpCh.assertQueue(QUEUE_NAME, { durable: false });
+    await amqpCh.assertQueue(QUEUE_NAME, { durable: true });
     await amqpCh.bindQueue(QUEUE_NAME, EXCHANGE, 'order.created');
 
     info('[AMQP] waiting for messages on queue:', QUEUE_NAME);
@@ -194,10 +194,23 @@ async function connectRabbit() {
           orderId: content.orderId,
           clientOrderRef: content.orderId,
           items: content.items || [],
-          pickup: content.pickup || null,
-          delivery: content.delivery || null,
-          contact: content.contact || null,
-          callbackMeta: { correlationId: content.correlationId || null }
+          pickup: content.pickup || {
+            address: content.pickupAddress,
+            scheduledTime: null
+          },
+          delivery: content.delivery || {
+            address: content.deliveryAddress,
+            estimatedTime: null
+          },
+          contact: content.contact || {
+            phone: null
+          },
+          priority: content.priority || 'standard',
+          notes: content.notes || '',
+          callbackMeta: { 
+            correlationId: content.correlationId || content.orderId,
+            clientId: content.clientId 
+          }
         };
 
         // Try to send to WMS; if not connected, nack (requeue) so that it can be retried later
